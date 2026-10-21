@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+use crate::object::{DEFAULT_MIN_NAME_LENGTH, ObjectNames};
+
 /// Command line arguments for the object file filesystem.
 #[derive(Debug, Parser)]
 #[command(
@@ -19,12 +21,34 @@ pub struct Args {
     #[arg(short = 'o', long = "option", value_name = "OPTION")]
     pub mount_options: Vec<String>,
 
+    /// Shortest lowercase hex file name recognized as an object
+    #[arg(
+        long,
+        value_name = "LEN",
+        default_value_t = DEFAULT_MIN_NAME_LENGTH,
+        value_parser = parse_name_length
+    )]
+    pub min_object_name_length: usize,
+
     /// Increase log verbosity; repeat for trace level
     #[arg(short, long, action = clap::ArgAction::Count)]
     pub verbose: u8,
 }
 
+/// Parses a name length, which must be positive.
+fn parse_name_length(value: &str) -> Result<usize, String> {
+    match value.parse() {
+        Ok(length) if length > 0 => Ok(length),
+        _ => Err("name length must be a positive integer".to_string()),
+    }
+}
+
 impl Args {
+    /// Object name recognition rule.
+    pub fn object_names(&self) -> ObjectNames {
+        ObjectNames::new(self.min_object_name_length)
+    }
+
     /// Canonical path of the directory, which must exist.
     pub fn resolve_path(&self) -> Result<PathBuf, Box<dyn Error>> {
         let path = fs::canonicalize(&self.path)

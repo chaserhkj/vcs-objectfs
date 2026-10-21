@@ -100,7 +100,7 @@ fn object_files_are_immutable() -> Outcome {
     fs::rename(&scratch, &renamed)?;
 
     // Committing is a rename to a hash-shaped name.
-    let object = mount.path("deadbeef");
+    let object = mount.path("deadbeefdeadbeef");
     fs::rename(&renamed, &object)?;
     assert_eq!(fs::read(&object)?, b"two", "the commit keeps the content");
     assert!(fs::metadata(&object)?.is_file(), "the commit succeeds");
@@ -157,10 +157,19 @@ fn object_files_are_immutable() -> Outcome {
 
     // Creating under an object name directly is refused.
     assert!(
-        denied(fs::write(mount.path("cafebabe"), b"new")),
+        denied(fs::write(mount.path("cafebabecafebabe"), b"new")),
         "create under an object name"
     );
-    assert!(!mount.path("cafebabe").exists(), "no object was created");
+    assert!(
+        !mount.path("cafebabecafebabe").exists(),
+        "no object was created"
+    );
+
+    // A short hex name is an ordinary, writable file.
+    let short = mount.path("deadbeef");
+    fs::write(&short, b"short")?;
+    fs::write(&short, b"still short")?;
+    fs::remove_file(&short)?;
 
     // Reading the object still works.
     assert_eq!(fs::read(&object)?, b"two", "read");
@@ -177,9 +186,9 @@ fn object_files_are_immutable() -> Outcome {
     assert!(mount.path("ab").is_dir(), "an ordinary directory");
     let nested = mount.path("ab/nested");
     fs::write(&nested, b"text")?;
-    fs::rename(&nested, mount.path("ab/deadbeef"))?;
+    fs::rename(&nested, mount.path("ab/deadbeefdeadbeef"))?;
     assert!(
-        denied(fs::remove_file(mount.path("ab/deadbeef"))),
+        denied(fs::remove_file(mount.path("ab/deadbeefdeadbeef"))),
         "nested unlink"
     );
     assert!(

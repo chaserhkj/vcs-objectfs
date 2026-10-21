@@ -45,7 +45,7 @@ fn run(args: &Args) -> Result<(), Box<dyn Error>> {
 
     info!("serving {} in place", path.display());
 
-    let fs = AcFs::new(backing.path().to_path_buf());
+    let fs = AcFs::new(backing.path().to_path_buf(), args.object_names());
     mount::run(fs, &path, &options)?;
 
     info!("unmounted {}", path.display());
