@@ -1,22 +1,53 @@
 # vcs-objectfs
 
-A FUSE filesystem that enforces access rules on a VCS object directory, giving
-object storage **write-only, append-only** semantics: writers can add objects,
-readers of the mount see nothing back, and no existing object can be modified
-or removed.
+A FUSE filesystem that treats VCS object files as immutable and passes every
+other file through unchanged.
 
 Built on [`easy_fuser`](https://github.com/Alogani/easy_fuser).
 
 ## Why
 
-VCS object directories (`objects/` in Git, the object store of other systems)
-are content-addressed and immutable: an object is written once, then only read
-or replicated. Serving them through FUSE lets a host enforce that contract
-instead of trusting every tool that writes there:
+A VCS object directory (`objects/` in Git, the object store of other systems) is
+content-addressed: an object's name is a hash of its content, so an object that is
+written once is never modified, renamed or deleted afterwards. Tools obey that
+contract by convention; a mount can enforce it.
 
-- new objects may be created, existing ones never changed or deleted;
-- clients that only need to push cannot read what they pushed;
-- pack files can grow by appending, but not be rewritten in place.
+The rule is also how an object comes into being. Writers create a file under a
+temporary name, write it, then rename it to its hash. The rename is the commit
+step: the file keeps its bytes and becomes read-only from that moment on.
+
+## Design
+
+An **object file** is a regular file whose name is a lowercase hexadecimal
+string — `[0-9a-f]+`, the hash. Everything else is an **ordinary file**.
+
+| Entry                              | Behavior                            |
+| ---------------------------------- | ----------------------------------- |
+| Object file                        | Immutable                           |
+| Directory, symlink, other file     | Same as the backing directory       |
+
+Object files are immutable in the sense that all of these fail with `EPERM`:
+
+- `unlink` and `rename` of an object file, and renaming anything onto it;
+- `open` for writing, `write`, `truncate`, `fallocate`, `copy_file_range` into
+  one;
+- `chmod`, `chown`, `utimes` and every other `setattr`;
+- `setxattr` and `removexattr`;
+- `create` and `mknod` under an object file name, whether or not a file already
+  has that name.
+
+`access` reports an object file as not writable, so permission checks agree with
+the operation results.
+
+Renaming a file to an object file name commits it. Before the rename the file is
+ordinary and fully writable; after it, no operation can change its content,
+metadata or name. A commit never overwrites an object: a rename whose destination
+is an existing object file fails with `EEXIST`. `renameat2(2)` flags reach the
+backing rename unchanged.
+
+A directory is never an object file, even when its name is hex — Git's fanout
+directories (`objects/ab/`) are ordinary directories whose entries may each be
+objects.
 
 ## Build
 
@@ -29,10 +60,12 @@ cargo build --release
 ## Run
 
 ```sh
-vcs-objectfs <SOURCE> <MOUNTPOINT>
+vcs-objectfs <PATH>
 ```
 
-`MOUNTPOINT` is created when missing and must lie outside `SOURCE`.
+`PATH` is served and mounted over in place: after the mount, that same path shows
+the filesystem. The backing directory is reached through an open handle on
+`/proc/self/fd`, so `/proc` must be mounted.
 
 | Option            | Effect                              |
 | ----------------- | ----------------------------------- |
@@ -40,18 +73,20 @@ vcs-objectfs <SOURCE> <MOUNTPOINT>
 | `-o`, `--option`  | Extra FUSE mount option, repeatable |
 | `-v`, `--verbose` | Debug logging; repeat for trace     |
 
-Unmount with `fusermount3 -u <MOUNTPOINT>`, or with Ctrl-C / SIGTERM.
+Unmount with `fusermount3 -u <PATH>`, or with Ctrl-C / SIGTERM.
 
 ## Layout
 
 | File                | Role                                                |
 | ------------------- | --------------------------------------------------- |
 | `src/main.rs`       | Argument handling, mount options, process lifecycle |
+| `src/backing.rs`    | Open handle to the directory the mount covers       |
 | `src/cli.rs`        | Command line definition and path validation         |
-| `src/filesystem.rs` | `AcFs` FUSE handler and its operation routing       |
+| `src/filesystem.rs` | `AcFs` FUSE handler and the immutability rules      |
 | `src/mount.rs`      | Mount call and unmount on termination signals       |
-| `AGENT.md`          | Access rule set and implementation rules            |
+| `src/object.rs`     | Object file name and identity                       |
+| `AGENTS.md`         | Access rule set and implementation rules            |
 
-`AcFs` delegates every operation to an `easy_fuser` preset. A rule is added by
-implementing that operation on `AcFs` and removing it from the matching
-`delegate_fs!` list.
+`AcFs` delegates every operation without a rule to an `easy_fuser` preset. A rule
+is added by implementing that operation on `AcFs` and removing it from the
+matching `delegate_fs!` list.

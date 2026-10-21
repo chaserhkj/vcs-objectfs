@@ -1,22 +1,19 @@
 use std::error::Error;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use clap::Parser;
 
-/// Command line arguments for the access-control filesystem.
+/// Command line arguments for the object file filesystem.
 #[derive(Debug, Parser)]
 #[command(
     name = "vcs-objectfs",
     version,
-    about = "Expose a VCS object directory as append-only storage"
+    about = "Expose a VCS object directory with immutable object files"
 )]
 pub struct Args {
-    /// Directory whose contents are served through the mount point
-    pub source: PathBuf,
-
-    /// Directory the filesystem is mounted on; created when missing
-    pub mountpoint: PathBuf,
+    /// Directory to serve and mount on; it stays the same path after mounting
+    pub path: PathBuf,
 
     /// Mount the filesystem read-only
     #[arg(short, long)]
@@ -32,43 +29,13 @@ pub struct Args {
 }
 
 impl Args {
-    /// Canonical path of the backing directory, which must exist.
-    pub fn resolve_source(&self) -> Result<PathBuf, Box<dyn Error>> {
-        let source = fs::canonicalize(&self.source)
-            .map_err(|err| format!("cannot resolve source {}: {err}", self.source.display()))?;
-        if !source.is_dir() {
-            return Err(format!("source {} is not a directory", source.display()).into());
+    /// Canonical path of the directory, which must exist.
+    pub fn resolve_path(&self) -> Result<PathBuf, Box<dyn Error>> {
+        let path = fs::canonicalize(&self.path)
+            .map_err(|err| format!("cannot resolve {}: {err}", self.path.display()))?;
+        if !path.is_dir() {
+            return Err(format!("{} is not a directory", path.display()).into());
         }
-        Ok(source)
-    }
-
-    /// Canonical mount point path, created when it does not exist.
-    pub fn resolve_mountpoint(&self, source: &Path) -> Result<PathBuf, Box<dyn Error>> {
-        if !self.mountpoint.exists() {
-            fs::create_dir_all(&self.mountpoint)?;
-        }
-        let mountpoint = fs::canonicalize(&self.mountpoint).map_err(|err| {
-            format!(
-                "cannot resolve mount point {}: {err}",
-                self.mountpoint.display()
-            )
-        })?;
-        if mountpoint.starts_with(source) {
-            return Err(format!(
-                "mount point {} lies inside source {}",
-                mountpoint.display(),
-                source.display()
-            )
-            .into());
-        }
-        if source.starts_with(&mountpoint) {
-            return Err(format!(
-                "source {} lies inside mount point {}",
-                source.display(),
-                mountpoint.display()
-            )
-            .into());
-        }
-        Ok(mountpoint)
+        Ok(path)
     }
 }

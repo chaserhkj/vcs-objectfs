@@ -1,6 +1,8 @@
+mod backing;
 mod cli;
 mod filesystem;
 mod mount;
+mod object;
 
 use std::error::Error;
 use std::process::ExitCode;
@@ -9,6 +11,7 @@ use clap::Parser;
 use easy_fuser::fuse_parallel::prelude::MountOption;
 use log::{LevelFilter, info};
 
+use crate::backing::Backing;
 use crate::cli::Args;
 use crate::filesystem::AcFs;
 
@@ -27,8 +30,8 @@ fn main() -> ExitCode {
 }
 
 fn run(args: &Args) -> Result<(), Box<dyn Error>> {
-    let source = args.resolve_source()?;
-    let mountpoint = args.resolve_mountpoint(&source)?;
+    let path = args.resolve_path()?;
+    let backing = Backing::open(&path)?;
 
     let mut options = vec![
         MountOption::FSName("vcs-objectfs".to_string()),
@@ -43,12 +46,12 @@ fn run(args: &Args) -> Result<(), Box<dyn Error>> {
             .map(|option| MountOption::CUSTOM(option.clone())),
     );
 
-    info!("serving {} at {}", source.display(), mountpoint.display());
+    info!("serving {} in place", path.display());
 
-    let fs = AcFs::new(source);
-    mount::run(fs, &mountpoint, &options)?;
+    let fs = AcFs::new(backing.path().to_path_buf());
+    mount::run(fs, &path, &options)?;
 
-    info!("unmounted {}", mountpoint.display());
+    info!("unmounted {}", path.display());
     Ok(())
 }
 

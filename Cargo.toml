@@ -3,7 +3,7 @@ name = "vcs-objectfs"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-description = "FUSE mount enforcing append-only semantics on a VCS object directory"
+description = "FUSE mount making VCS object files immutable"
 license = "MIT"
 
 [dependencies]
@@ -12,6 +12,10 @@ ctrlc = { version = "3.5", features = ["termination"] }
 easy_fuser = { version = "0.7", default-features = false, features = ["parallel"] }
 env_logger = "0.11"
 log = "0.4"
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
 
 [[bin]]
 name = "vcs-objectfs"
