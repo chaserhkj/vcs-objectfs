@@ -11,11 +11,11 @@ pub const DEFAULT_MIN_NAME_LENGTH: usize = 16;
 
 /// Recognition rule for object file names.
 #[derive(Debug, Clone, Copy)]
-pub struct ObjectNames {
+pub struct ObjectNameDef {
     min_length: usize,
 }
 
-impl Default for ObjectNames {
+impl Default for ObjectNameDef {
     fn default() -> Self {
         Self {
             min_length: DEFAULT_MIN_NAME_LENGTH,
@@ -23,7 +23,7 @@ impl Default for ObjectNames {
     }
 }
 
-impl ObjectNames {
+impl ObjectNameDef {
     /// Recognizes lowercase hex names of at least `min_length` bytes; 0 accepts every length.
     pub fn new(min_length: usize) -> Self {
         Self { min_length }
@@ -59,7 +59,7 @@ mod tests {
 
     #[test]
     fn hex_names_of_sufficient_length_are_object_names() {
-        let names = ObjectNames::default();
+        let names = ObjectNameDef::default();
         for name in [OBJECT, "0123456789abcdef0", "0000000000000000"] {
             assert!(names.is_name(OsStr::new(name)), "{name}");
         }
@@ -67,7 +67,7 @@ mod tests {
 
     #[test]
     fn short_hex_names_are_not_object_names() {
-        let names = ObjectNames::default();
+        let names = ObjectNameDef::default();
         for name in ["", "0", "deadbeef", "0123456789abcde"] {
             assert!(!names.is_name(OsStr::new(name)), "{name}");
         }
@@ -75,7 +75,7 @@ mod tests {
 
     #[test]
     fn other_names_are_not_object_names() {
-        let names = ObjectNames::default();
+        let names = ObjectNameDef::default();
         for name in [
             "DEADBEEFDEADBEEF",
             "DeadBeefDeadBeef",
@@ -91,14 +91,14 @@ mod tests {
 
     #[test]
     fn min_length_is_configurable() {
-        let names = ObjectNames::new(4);
+        let names = ObjectNameDef::new(4);
         assert!(names.is_name(OsStr::new("deadbeef")));
         assert!(!names.is_name(OsStr::new("abc")));
     }
 
     #[test]
     fn zero_min_length_accepts_any_length() {
-        let names = ObjectNames::new(0);
+        let names = ObjectNameDef::new(0);
         assert!(names.is_name(OsStr::new("0")));
         assert!(names.is_name(OsStr::new(OBJECT)));
         assert!(!names.is_name(OsStr::new("")));
@@ -121,7 +121,7 @@ mod tests {
         fs::write(&short, b"short").unwrap();
         fs::write(prefixed.join(OBJECT), b"object").unwrap();
 
-        let names = ObjectNames::default();
+        let names = ObjectNameDef::default();
         assert!(names.is_file(&object));
         assert!(names.is_file(&prefixed.join(OBJECT)));
         assert!(!names.is_file(&nested), "a directory is not an object file");

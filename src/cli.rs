@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-use crate::object::{DEFAULT_MIN_NAME_LENGTH, ObjectNames};
+use crate::object::{DEFAULT_MIN_NAME_LENGTH, ObjectNameDef};
 
 /// Command line arguments for the object file filesystem.
 #[derive(Debug, Parser)]
@@ -32,8 +32,8 @@ pub struct Args {
 
 impl Args {
     /// Object name recognition rule.
-    pub fn object_names(&self) -> ObjectNames {
-        ObjectNames::new(self.min_object_name_length)
+    pub fn object_name_def(&self) -> ObjectNameDef {
+        ObjectNameDef::new(self.min_object_name_length)
     }
 
     /// Canonical path of the directory, which must exist.

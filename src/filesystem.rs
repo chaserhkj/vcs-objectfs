@@ -7,7 +7,7 @@ use easy_fuser::fuse_parallel::prelude::*;
 use easy_fuser::fuse_presets::mirror_fs::{MirrorFs, MirrorFsTrait};
 use easy_fuser::fuse_presets::{StatelessHandler, UnimplementedFuseHandler};
 
-use crate::object::ObjectNames;
+use crate::object::ObjectNameDef;
 
 /// Mount that makes object files immutable and mirrors every other entry.
 ///
@@ -18,16 +18,16 @@ use crate::object::ObjectNames;
 /// in the backing directory.
 pub struct AcFs {
     mirror: MirrorFs,
-    names: ObjectNames,
+    object_name_def: ObjectNameDef,
     directory: StatelessHandler<PathBuf>,
     unsupported: UnimplementedFuseHandler<PathBuf>,
 }
 
 impl AcFs {
-    pub fn new(source: PathBuf, names: ObjectNames) -> Self {
+    pub fn new(source: PathBuf, object_name_def: ObjectNameDef) -> Self {
         Self {
             mirror: MirrorFs::new(source),
-            names,
+            object_name_def,
             directory: StatelessHandler::new(),
             unsupported: UnimplementedFuseHandler::new(),
         }
@@ -39,7 +39,7 @@ impl AcFs {
 
     /// Refuses to change an object file at `path`.
     fn reject_object_file(&self, path: &Path) -> FuseResult<()> {
-        if !self.names.is_file(path) {
+        if !self.object_name_def.is_file(path) {
             return Ok(());
         }
         Err(ErrorKind::PermissionDenied.to_error(format!(
@@ -52,7 +52,7 @@ impl AcFs {
     fn reject_object_creation(&self, path: &Path, how: &str) -> FuseResult<()> {
         if !path
             .file_name()
-            .is_some_and(|name| self.names.is_name(name))
+            .is_some_and(|name| self.object_name_def.is_name(name))
         {
             return Ok(());
         }
@@ -86,7 +86,7 @@ impl FuseHandler for AcFs {
 
     fn access(&self, req: &RequestInfo, file_id: PathBuf, mask: AccessFlags) -> FuseResult<()> {
         let mut mask = mask;
-        if self.names.is_file(&self.path(&file_id)) {
+        if self.object_name_def.is_file(&self.path(&file_id)) {
             mask.remove(AccessFlags::W_OK);
         }
         self.mirror.access(req, file_id, mask)
@@ -117,7 +117,7 @@ impl FuseHandler for AcFs {
         if writes_content(flags) {
             self.reject_object_file(&path)?;
         }
-        if !self.names.is_file(&path) {
+        if !self.object_name_def.is_file(&path) {
             self.reject_object_creation(&path, "creating a file")?;
         }
         self.mirror.create(req, parent_id, name, mode, umask, flags)
@@ -248,7 +248,7 @@ impl FuseHandler for AcFs {
     ) -> FuseResult<()> {
         self.reject_object_file(&self.path(&parent_id).join(name))?;
         let target = self.path(&newparent).join(newname);
-        if self.names.is_file(&target) {
+        if self.object_name_def.is_file(&target) {
             return Err(ErrorKind::FileExists.to_error(format!(
                 "{} is an object file and keeps its name",
                 target.display()
