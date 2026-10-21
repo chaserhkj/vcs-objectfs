@@ -84,7 +84,7 @@ the filesystem. The backing directory is reached through an open handle on
 | Option                             | Effect                                        |
 | ---------------------------------- | --------------------------------------------- |
 | `-o`, `--option`                   | Extra FUSE mount option, repeatable           |
-| `--min-object-name-length <LEN>`   | Shortest hex name treated as an object; 16, 0 for any |
+| `-m`, `--min-object-name-length <LEN>` | Shortest hex name treated as an object; 16, 0 for any |
 | `-v`, `--verbose`                  | Debug logging; repeat for trace               |
 
 Unmount with `fusermount3 -u <PATH>`, or with Ctrl-C / SIGTERM.

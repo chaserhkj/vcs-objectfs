@@ -22,7 +22,12 @@ pub struct Args {
     pub mount_options: Vec<String>,
 
     /// Shortest lowercase hex file name recognized as an object, 0 to recognize any length
-    #[arg(long, value_name = "LEN", default_value_t = DEFAULT_MIN_NAME_LENGTH)]
+    #[arg(
+        short = 'm',
+        long,
+        value_name = "LEN",
+        default_value_t = DEFAULT_MIN_NAME_LENGTH
+    )]
     pub min_object_name_length: usize,
 
     /// Increase log verbosity; repeat for trace level
