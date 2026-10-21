@@ -15,10 +15,6 @@ pub struct Args {
     /// Directory to serve and mount on; it stays the same path after mounting
     pub path: PathBuf,
 
-    /// Mount the filesystem read-only
-    #[arg(short, long)]
-    pub read_only: bool,
-
     /// Additional FUSE mount option, repeatable
     #[arg(short = 'o', long = "option", value_name = "OPTION")]
     pub mount_options: Vec<String>,

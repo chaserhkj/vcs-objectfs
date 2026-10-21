@@ -37,9 +37,6 @@ fn run(args: &Args) -> Result<(), Box<dyn Error>> {
         MountOption::FSName("vcs-objectfs".to_string()),
         MountOption::Subtype("vcs-objectfs".to_string()),
     ];
-    if args.read_only {
-        options.push(MountOption::RO);
-    }
     options.extend(
         args.mount_options
             .iter()

@@ -69,7 +69,6 @@ the filesystem. The backing directory is reached through an open handle on
 
 | Option            | Effect                              |
 | ----------------- | ----------------------------------- |
-| `-r`, `--read-only` | Mount read-only                   |
 | `-o`, `--option`  | Extra FUSE mount option, repeatable |
 | `-v`, `--verbose` | Debug logging; repeat for trace     |
 
