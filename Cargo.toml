@@ -1,0 +1,18 @@
+[package]
+name = "vcs-objectfs"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "FUSE mount enforcing append-only semantics on a VCS object directory"
+license = "MIT"
+
+[dependencies]
+clap = { version = "4.6", features = ["derive"] }
+ctrlc = { version = "3.5", features = ["termination"] }
+easy_fuser = { version = "0.7", default-features = false, features = ["parallel"] }
+env_logger = "0.11"
+log = "0.4"
+
+[[bin]]
+name = "vcs-objectfs"
+path = "src/main.rs"
