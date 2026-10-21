@@ -59,6 +59,18 @@ Requires a Rust toolchain and the FUSE 3 runtime (`/dev/fuse`, `fusermount3`).
 cargo build --release
 ```
 
+## Test
+
+End-to-end tests mount the filesystem, so they run in a private mount namespace:
+
+```sh
+unshare -rm timeout 60s cargo test --test e2e
+```
+
+`tests/e2e.rs` checks the object rules from the kernel side and drives git and jj
+against a mounted object store. A test that needs a tool missing from `PATH` is
+skipped with a note on stderr.
+
 ## Run
 
 ```sh

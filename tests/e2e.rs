@@ -1,7 +1,10 @@
-//! Mounts the filesystem and checks the object file rules from the kernel side.
+//! Mounts the filesystem and checks the object file rules from the kernel side,
+//! and that git and jj work with their object storage mounted.
 //!
 //! Skipped when FUSE is unavailable: the test needs `/dev/fuse`, `fusermount3`,
-//! and a `mount` that can be written to.
+//! and a `mount` that can be written to. The git and jj tests are skipped when
+//! the respective binary is missing from `PATH`; the jj test also needs git,
+//! whose object store is the one it mounts.
 
 use std::error::Error;
 use std::fs;
@@ -13,11 +16,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
+use tempfile::TempDir;
+
 type Outcome = Result<(), Box<dyn Error>>;
 
 struct Mount {
     directory: PathBuf,
     daemon: Child,
+    /// Whether the mount created the directory, which it removes on drop.
+    owned: bool,
 }
 
 /// Distinguishes the mount directories of mounts running side by side.
@@ -34,12 +41,25 @@ impl Mount {
             .join(format!("vcs-objectfs-e2e-{}-{serial}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory)?;
+        let mut mount = Self::start_at(directory, arguments)?;
+        mount.owned = true;
+        Ok(mount)
+    }
 
+    /// Mounts an existing `directory`, which outlives the mount.
+    fn start_at(directory: PathBuf, arguments: &[&str]) -> Result<Self, Box<dyn Error>> {
+        if !directory.is_dir() {
+            return Err(format!("{} is not a directory", directory.display()).into());
+        }
         let daemon = Command::new(env!("CARGO_BIN_EXE_vcs-objectfs"))
             .args(arguments)
             .arg(&directory)
             .spawn()?;
-        let mount = Self { directory, daemon };
+        let mount = Self {
+            directory,
+            daemon,
+            owned: false,
+        };
         mount.wait_until_mounted()?;
         Ok(mount)
     }
@@ -68,16 +88,20 @@ impl Drop for Mount {
             .status();
         let _ = self.daemon.kill();
         let _ = self.daemon.wait();
-        let _ = fs::remove_dir_all(&self.directory);
+        if self.owned {
+            let _ = fs::remove_dir_all(&self.directory);
+        }
     }
 }
 
 fn is_mounted(directory: &Path) -> io::Result<bool> {
     let mounts = fs::read_to_string("/proc/self/mountinfo")?;
     let directory = directory.to_string_lossy();
-    Ok(mounts
-        .lines()
-        .any(|line| line.contains(" - fuse ") && line.contains(&*directory)))
+    Ok(mounts.lines().any(|line| {
+        let mut fields = line.split(' ');
+        let mount_point = fields.nth(4);
+        line.contains(" - fuse ") && mount_point == Some(&*directory)
+    }))
 }
 
 fn fuse_available() -> bool {
@@ -239,5 +263,344 @@ fn zero_min_length_makes_every_hex_name_an_object() -> Outcome {
     fs::write(&plain, b"text")?;
     fs::write(&plain, b"still writable")?;
     fs::remove_file(&plain)?;
+    Ok(())
+}
+
+/// An executable found in `PATH`.
+fn command_available(name: &str) -> bool {
+    std::env::var_os("PATH").is_some_and(|path| {
+        std::env::split_paths(&path).any(|directory| {
+            fs::metadata(directory.join(name))
+                .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+        })
+    })
+}
+
+/// Runs `command` in `directory` and fails with both output streams when it exits non-zero.
+fn run(directory: &Path, command: &mut Command) -> Result<String, Box<dyn Error>> {
+    let output = command.current_dir(directory).output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "{} failed with {}: {}{}",
+            command.get_program().to_string_lossy(),
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// A scratch directory in the resolved temporary directory, where a mount is reachable
+/// under the path it was given.
+fn scratch_directory(prefix: &str) -> Result<TempDir, Box<dyn Error>> {
+    Ok(tempfile::Builder::new()
+        .prefix(prefix)
+        .tempdir_in(fs::canonicalize(std::env::temp_dir())?)?)
+}
+
+/// Git that takes its configuration from the arguments and the repository only.
+fn git(directory: &Path, arguments: &[&str]) -> Result<String, Box<dyn Error>> {
+    run(
+        directory,
+        Command::new("git")
+            .args(["-c", "user.name=e2e", "-c", "user.email=e2e@example.com"])
+            .args(["-c", "init.defaultBranch=main"])
+            .args(["-c", "protocol.file.allow=always"])
+            .args(arguments)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE"),
+    )
+}
+
+/// Subjects of all commits, oldest first.
+fn git_subjects(directory: &Path) -> Result<Vec<String>, Box<dyn Error>> {
+    let log = git(directory, &["log", "--all", "--reverse", "--format=%s"])?;
+    Ok(log.lines().map(str::to_owned).collect())
+}
+
+/// Appends `content` to a file in the working tree and commits it.
+fn git_commit(
+    directory: &Path,
+    file: &str,
+    content: &str,
+    message: &str,
+) -> Result<(), Box<dyn Error>> {
+    let path = directory.join(file);
+    let mut bytes = fs::read(&path).unwrap_or_default();
+    bytes.extend_from_slice(content.as_bytes());
+    fs::write(&path, bytes)?;
+    git(directory, &["add", file])?;
+    git(directory, &["commit", "-q", "-m", message])?;
+    Ok(())
+}
+
+/// An empty repository whose object store is mounted, with its work tree beside the mount.
+fn mounted_git_repository(prefix: &str) -> Result<(TempDir, Mount, PathBuf), Box<dyn Error>> {
+    let root = scratch_directory(prefix)?;
+    let repo = root.path().join("repo");
+    fs::create_dir_all(&repo)?;
+    git(&repo, &["init", "-q"])?;
+    let objects = repo.join(".git/objects");
+    let mount = Mount::start_at(objects.clone(), &[])?;
+    assert!(is_mounted(&objects)?, "the object store is mounted");
+    assert!(
+        !is_mounted(&repo)?,
+        "the rest of the repository stays unmounted"
+    );
+    Ok((root, mount, repo))
+}
+
+/// A loose object of a Git object store, which Git names after its hash.
+fn loose_object(objects: &Path) -> Result<Option<PathBuf>, Box<dyn Error>> {
+    let fanout = fs::read_dir(objects)?
+        .filter_map(Result::ok)
+        .find(|entry| entry.file_name().len() == 2);
+    let Some(fanout) = fanout else {
+        return Ok(None);
+    };
+    Ok(fs::read_dir(fanout.path())?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .next())
+}
+
+#[test]
+fn git_commits_through_the_mount() -> Outcome {
+    if !fuse_available() {
+        eprintln!("skipping: FUSE is unavailable");
+        return Ok(());
+    }
+    if !command_available("git") {
+        eprintln!("skipping: git is unavailable");
+        return Ok(());
+    }
+
+    let (_root, _mount, repo) = mounted_git_repository("vcs-objectfs-git-")?;
+    git_commit(&repo, "a.txt", "one\n", "one")?;
+    git_commit(&repo, "a.txt", "two\n", "two")?;
+    git_commit(&repo, "b.txt", "side\n", "side")?;
+
+    assert_eq!(
+        git_subjects(&repo)?,
+        ["one", "two", "side"],
+        "commits are written and read back"
+    );
+    git(&repo, &["fsck", "--strict", "--no-dangling"])?;
+
+    // Git commits an object by renaming a temporary file to its hash, so the
+    // resulting objects are immutable.
+    let object = loose_object(&repo.join(".git/objects"))?.ok_or("no loose object was written")?;
+    assert!(
+        denied(fs::remove_file(&object)),
+        "an object cannot be removed"
+    );
+    assert!(
+        denied(fs::OpenOptions::new().write(true).open(&object).map(drop)),
+        "an object cannot be opened for writing"
+    );
+
+    // Git writes temporary files and directories beside the objects while it
+    // commits, which the mount leaves writable.
+    fs::write(repo.join("c.txt"), b"more\n")?;
+    git(&repo, &["add", "c.txt"])?;
+    git(&repo, &["stash", "-q"])?;
+    assert!(!repo.join("c.txt").exists(), "the stash takes the change");
+    git(&repo, &["stash", "pop", "-q"])?;
+    git(&repo, &["commit", "-q", "-m", "more"])?;
+    assert_eq!(
+        git_subjects(&repo)?,
+        ["one", "two", "side", "more"],
+        "commits continue beside existing objects"
+    );
+
+    // A push into the mounted store asks the receiving side to rename loose
+    // objects into place, which lends them the object name and is refused. The
+    // push reports the rejection and leaves the store as it was.
+    let clone_root = scratch_directory("vcs-objectfs-git-clone-")?;
+    let clone = clone_root.path().join("clone");
+    git(
+        &repo,
+        &[
+            "clone",
+            "-q",
+            repo.to_str().unwrap(),
+            clone.to_str().unwrap(),
+        ],
+    )?;
+    let before_push = git_subjects(&repo)?;
+    fs::write(clone.join("d.txt"), b"pushed\n")?;
+    git(&clone, &["add", "d.txt"])?;
+    git(&clone, &["commit", "-q", "-m", "pushed"])?;
+    git(&clone, &["push", "-q", "origin", "main"])
+        .expect_err("a push cannot commit into a mounted store");
+    assert_eq!(
+        git_subjects(&repo)?,
+        before_push,
+        "a rejected push changes nothing"
+    );
+    Ok(())
+}
+
+#[test]
+fn git_collects_garbage_through_the_mount() -> Outcome {
+    if !fuse_available() {
+        eprintln!("skipping: FUSE is unavailable");
+        return Ok(());
+    }
+    if !command_available("git") {
+        eprintln!("skipping: git is unavailable");
+        return Ok(());
+    }
+
+    let (_root, _mount, repo) = mounted_git_repository("vcs-objectfs-git-gc-")?;
+    git_commit(&repo, "a.txt", "one\n", "one")?;
+    git_commit(&repo, "a.txt", "two\n", "two")?;
+    git_commit(&repo, "b.txt", "three\n", "three")?;
+
+    // A clone reads every object through the mount.
+    let clone_root = scratch_directory("vcs-objectfs-git-gc-clone-")?;
+    let clone = clone_root.path().join("clone");
+    git(
+        &repo,
+        &[
+            "clone",
+            "-q",
+            repo.to_str().unwrap(),
+            clone.to_str().unwrap(),
+        ],
+    )?;
+    assert_eq!(
+        git_subjects(&clone)?,
+        ["one", "two", "three"],
+        "a clone reads the history"
+    );
+    git(&clone, &["fsck", "--strict", "--no-dangling"])?;
+
+    // Packing reads loose objects and writes a pack, so the repository keeps
+    // working while the loose objects it packed stay behind write-protected.
+    git(&repo, &["gc", "--quiet"])?;
+    git(&repo, &["fsck", "--strict", "--no-dangling"])?;
+    assert_eq!(
+        git_subjects(&repo)?,
+        ["one", "two", "three"],
+        "the history survives a collection"
+    );
+    git_commit(&repo, "b.txt", "four\n", "four")?;
+    assert_eq!(
+        git_subjects(&repo)?,
+        ["one", "two", "three", "four"],
+        "commits continue after a collection"
+    );
+    git(&repo, &["fsck", "--strict", "--no-dangling"])?;
+    Ok(())
+}
+
+/// Jujutsu with its configuration taken from the environment only.
+fn jj(directory: &Path, arguments: &[&str]) -> Result<String, Box<dyn Error>> {
+    run(
+        directory,
+        Command::new("jj")
+            .args(["--color", "never"])
+            .args(arguments)
+            .env("JJ_CONFIG", "/dev/null")
+            .env("JJ_USER", "e2e")
+            .env("JJ_EMAIL", "e2e@example.com"),
+    )
+}
+
+/// Descriptions of the changes from the root commit to the working copy, oldest first.
+fn jj_descriptions(directory: &Path) -> Result<Vec<String>, Box<dyn Error>> {
+    let log = jj(
+        directory,
+        &[
+            "log",
+            "--no-graph",
+            "--reversed",
+            "-r",
+            "::@",
+            "-T",
+            "description.first_line() ++ \"\\n\"",
+        ],
+    )?;
+    Ok(log
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect())
+}
+
+#[test]
+fn jj_commits_through_the_mount() -> Outcome {
+    if !fuse_available() {
+        eprintln!("skipping: FUSE is unavailable");
+        return Ok(());
+    }
+    if !command_available("jj") {
+        eprintln!("skipping: jj is unavailable");
+        return Ok(());
+    }
+    // The git backend is the object storage this mount serves: jj's own backend
+    // writes immutable files in place, which the mount refuses.
+    if !command_available("git") {
+        eprintln!("skipping: the jj git backend needs git");
+        return Ok(());
+    }
+
+    let root = scratch_directory("vcs-objectfs-jj-")?;
+    let repo = root.path().join("repo");
+    fs::create_dir_all(&repo)?;
+    jj(&repo, &["git", "init"])?;
+    let objects = repo.join(".git/objects");
+    let mount = Mount::start_at(objects.clone(), &[])?;
+    assert!(is_mounted(&objects)?, "the object store is mounted");
+
+    fs::write(repo.join("a.txt"), b"one\n")?;
+    jj(&repo, &["describe", "-m", "first change"])?;
+    jj(&repo, &["new"])?;
+    fs::write(repo.join("b.txt"), b"two\n")?;
+    jj(&repo, &["describe", "-m", "second change"])?;
+
+    assert_eq!(
+        jj_descriptions(&repo)?,
+        ["first change", "second change"],
+        "changes are written and read back"
+    );
+    assert_eq!(
+        jj(&repo, &["file", "show", "-r", "@-", "a.txt"])?,
+        "one\n",
+        "a file is read out of the store"
+    );
+
+    // A squash writes a rewritten tree; its objects are new and become immutable.
+    jj(&repo, &["squash", "--into", "@-", "-m", "squashed"])?;
+    assert_eq!(
+        jj_descriptions(&repo)?,
+        ["squashed"],
+        "the squashed change keeps its place"
+    );
+    assert_eq!(
+        jj(&repo, &["file", "show", "-r", "@-", "a.txt"])?,
+        "one\n",
+        "the squashed change carries the first file"
+    );
+    assert_eq!(
+        jj(&repo, &["file", "show", "-r", "@-", "b.txt"])?,
+        "two\n",
+        "the squashed change carries the second file"
+    );
+
+    // Git reads the same objects, which stay a valid object database that packs.
+    git(&repo, &["fsck", "--strict", "--no-dangling"])?;
+    git(&repo, &["gc", "--quiet"])?;
+    assert_eq!(
+        jj_descriptions(&repo)?,
+        ["squashed"],
+        "jj reads the repository after git repacked it"
+    );
+    let _ = mount;
     Ok(())
 }
