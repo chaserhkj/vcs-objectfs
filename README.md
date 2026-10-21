@@ -16,6 +16,14 @@ The rule is also how an object comes into being. Writers create a file under a
 temporary name, write it, then rename it to its hash. The rename is the commit
 step: the file keeps its bytes and becomes read-only from that moment on.
 
+The motivation is a lightweight guardrail for an AI agent running from a VCS
+repository. Such an agent holds its user's authority, so one that misbehaves, or
+one that follows instructions injected through the content it reads, can issue
+any write the user can. Against this mount, every committed object stays byte
+for byte as it was, whatever the agent attempts. The guardrail covers VCS
+operations alone: it adds a layer over a sandbox rather than replacing one, and
+the sandbox still bounds the rest of the agent's reach.
+
 ## Design
 
 An **object file** is a regular file whose name is a lowercase hexadecimal
