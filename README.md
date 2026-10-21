@@ -59,6 +59,17 @@ Requires a Rust toolchain and the FUSE 3 runtime (`/dev/fuse`, `fusermount3`).
 cargo build --release
 ```
 
+The flake builds the same binary with the toolchain and dependencies pinned in
+`flake.lock`:
+
+```sh
+nix build        # ./result/bin/vcs-objectfs
+nix develop      # cargo, clippy, rustfmt and fusermount3
+```
+
+`nix build` runs the unit tests only: the end-to-end tests need a mount
+namespace, which the build sandbox does not provide.
+
 ## Test
 
 End-to-end tests mount the filesystem, so they run in a private mount namespace:
@@ -106,6 +117,8 @@ unmount as well.
 | `src/mount.rs`      | Mount call and unmount on termination signals       |
 | `src/daemon.rs`     | `--foreground` switch, fork and startup handshake   |
 | `src/object.rs`     | Object file name and identity                       |
+| `nix/package.nix`   | Nix derivation for the binary                       |
+| `flake.nix`         | flake-parts outputs: packages, dev shell, formatter |
 | `AGENTS.md`         | Access rule set and implementation rules            |
 
 `AcFs` delegates every operation without a rule to an `easy_fuser` preset. A rule
