@@ -5,14 +5,24 @@ Guidelines for working on `vcs-objectfs`, a FUSE filesystem built on
 
 ## End-to-end tests
 
-**Always run end-to-end tests under a timeout**, e.g. `timeout 60s cargo test --test e2e` or
-`timeout 60s ./target/debug/vcs-objectfs <PATH>`. FUSE daemons hang for many
-reasons — a wedged kernel channel, a missing `/dev/fuse`, an unmount that never completes, a
-signal handler that deadlocks. A hung process can leave a stale mount and block the whole
-session, so every test invocation gets a hard deadline.
+**Always run end-to-end tests inside a private mount namespace, under a timeout:**
 
-Clean up after a timed-out run: `fusermount3 -u <PATH>` (fall back to `fusermount -u`, then
-`umount`), and confirm the path is unmounted before retrying.
+```sh
+unshare -rm timeout 60s cargo test --test e2e
+```
+
+`unshare -rm` maps the current user to root and gives the test its own mount namespace, so every
+mount it creates disappears with the namespace. A hung or crashed test therefore cannot leave a
+stale mount on the host, and no real root is needed. Manual runs take the same prefix:
+`unshare -rm timeout 60s ./target/debug/vcs-objectfs <PATH>`.
+
+The timeout is mandatory as well: FUSE daemons hang for many reasons — a wedged kernel channel, a
+missing `/dev/fuse`, an unmount that never completes, a signal handler that deadlocks — and a hung
+process can block the whole session.
+
+If a mount still persists after a timed-out run, unmount from a fresh namespace with
+`unshare -rm fusermount3 -u <PATH>` (fall back to `fusermount -u`, then `umount`), and confirm the
+path is unmounted before retrying.
 
 ## Rust
 
