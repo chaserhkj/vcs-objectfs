@@ -46,6 +46,7 @@ path is unmounted before retrying.
   traversal outside it.
 - Assume callers are concurrent and adversarial, and that a request may be aborted at any point.
 - An object file is a regular file named `[0-9a-f]+` with at least `--min-object-name-length`
+  bytes (16 by default, 0 for any length). Every operation that could change its
   bytes (16 by default). Every operation that could change its
   content, metadata, name or existence must reject it with `EPERM`, and every operation that
   could create one under that name must reject it as well. Directories are never object files,

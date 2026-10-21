@@ -20,8 +20,8 @@ step: the file keeps its bytes and becomes read-only from that moment on.
 
 An **object file** is a regular file whose name is a lowercase hexadecimal
 string at least `--min-object-name-length` characters long — `[0-9a-f]{16,}` by
-default, the hash. A shorter hex name is an **ordinary file**. Everything else is
-an ordinary file too.
+default, the hash; a length of 0 accepts `[0-9a-f]+`. A shorter hex name is an
+**ordinary file**. Everything else is an ordinary file too.
 
 | Entry                              | Behavior                            |
 | ---------------------------------- | ----------------------------------- |
@@ -72,7 +72,7 @@ the filesystem. The backing directory is reached through an open handle on
 | Option                             | Effect                                        |
 | ---------------------------------- | --------------------------------------------- |
 | `-o`, `--option`                   | Extra FUSE mount option, repeatable           |
-| `--min-object-name-length <LEN>`   | Shortest hex name treated as an object; 16    |
+| `--min-object-name-length <LEN>`   | Shortest hex name treated as an object; 16, 0 for any |
 | `-v`, `--verbose`                  | Debug logging; repeat for trace               |
 
 Unmount with `fusermount3 -u <PATH>`, or with Ctrl-C / SIGTERM.

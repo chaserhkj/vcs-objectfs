@@ -1,5 +1,6 @@
 //! Object file identity: a regular file whose name is a lowercase hex string
-//! at least [`DEFAULT_MIN_NAME_LENGTH`] characters long.
+//! at least [`DEFAULT_MIN_NAME_LENGTH`] characters long, or of any length when
+//! the minimum is set to 0.
 
 use std::ffi::OsStr;
 use std::fs;
@@ -23,15 +24,17 @@ impl Default for ObjectNames {
 }
 
 impl ObjectNames {
-    /// Recognizes lowercase hex names of at least `min_length` bytes.
+    /// Recognizes lowercase hex names of at least `min_length` bytes; 0 accepts every length.
     pub fn new(min_length: usize) -> Self {
         Self { min_length }
     }
 
     /// Whether `name` is a lowercase hexadecimal string of the required length.
     pub fn is_name(&self, name: &OsStr) -> bool {
+        // A name holds at least one byte, so a minimum of 0 recognizes one hex digit and up.
+        let min_length = self.min_length.max(1);
         name.to_str().is_some_and(|name| {
-            name.len() >= self.min_length
+            name.len() >= min_length
                 && name
                     .bytes()
                     .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
@@ -91,6 +94,15 @@ mod tests {
         let names = ObjectNames::new(4);
         assert!(names.is_name(OsStr::new("deadbeef")));
         assert!(!names.is_name(OsStr::new("abc")));
+    }
+
+    #[test]
+    fn zero_min_length_accepts_any_length() {
+        let names = ObjectNames::new(0);
+        assert!(names.is_name(OsStr::new("0")));
+        assert!(names.is_name(OsStr::new(OBJECT)));
+        assert!(!names.is_name(OsStr::new("")));
+        assert!(!names.is_name(OsStr::new("gg")));
     }
 
     #[test]

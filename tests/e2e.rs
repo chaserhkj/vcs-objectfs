@@ -9,6 +9,7 @@ use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -19,14 +20,23 @@ struct Mount {
     daemon: Child,
 }
 
+/// Distinguishes the mount directories of mounts running side by side.
+static MOUNTS: AtomicUsize = AtomicUsize::new(0);
+
 impl Mount {
     fn start() -> Result<Self, Box<dyn Error>> {
+        Self::start_with(&[])
+    }
+
+    fn start_with(arguments: &[&str]) -> Result<Self, Box<dyn Error>> {
+        let serial = MOUNTS.fetch_add(1, Ordering::Relaxed);
         let directory = fs::canonicalize(std::env::temp_dir())?
-            .join(format!("vcs-objectfs-e2e-{}", std::process::id()));
+            .join(format!("vcs-objectfs-e2e-{}-{serial}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory)?;
 
         let daemon = Command::new(env!("CARGO_BIN_EXE_vcs-objectfs"))
+            .args(arguments)
             .arg(&directory)
             .spawn()?;
         let mount = Self { directory, daemon };
@@ -195,5 +205,39 @@ fn object_files_are_immutable() -> Outcome {
         fs::remove_dir(mount.path("ab")).is_err(),
         "a non-empty directory stays"
     );
+    Ok(())
+}
+
+#[test]
+fn zero_min_length_makes_every_hex_name_an_object() -> Outcome {
+    if !fuse_available() {
+        eprintln!("skipping: FUSE is unavailable");
+        return Ok(());
+    }
+    let mount = Mount::start_with(&["--min-object-name-length", "0"])?;
+
+    let object = mount.path("deadbeef");
+    fs::write(mount.path("scratch"), b"any hex name")?;
+    fs::rename(mount.path("scratch"), &object)?;
+    assert_eq!(fs::read(&object)?, b"any hex name", "read");
+    assert!(denied(fs::write(&object, b"changed")), "write");
+    assert!(denied(fs::remove_file(&object)), "unlink");
+    assert!(
+        denied(fs::write(mount.path("ab"), b"new")),
+        "create under a hex name"
+    );
+
+    // A single hex digit is enough to name an object.
+    fs::write(mount.path("single"), b"one digit")?;
+    fs::rename(mount.path("single"), mount.path("0"))?;
+    assert!(
+        denied(fs::write(mount.path("0"), b"changed")),
+        "single digit"
+    );
+
+    let plain = mount.path("notes.txt");
+    fs::write(&plain, b"text")?;
+    fs::write(&plain, b"still writable")?;
+    fs::remove_file(&plain)?;
     Ok(())
 }
