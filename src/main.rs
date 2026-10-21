@@ -1,5 +1,6 @@
 mod backing;
 mod cli;
+mod daemon;
 mod filesystem;
 mod mount;
 mod object;
@@ -43,13 +44,20 @@ fn run(args: &Args) -> Result<(), Box<dyn Error>> {
             .map(|option| MountOption::CUSTOM(option.clone())),
     );
 
-    info!("serving {} in place", path.display());
+    let source = backing.path().to_path_buf();
+    let object_name_def = args.object_name_def();
+    let mountpoint = path.clone();
+    let serve = move |readiness: &mut daemon::Readiness| {
+        info!("serving {} in place", mountpoint.display());
+        let fs = AcFs::new(source, object_name_def);
+        mount::run(fs, &mountpoint, &options, || readiness.ready())
+    };
 
-    let fs = AcFs::new(backing.path().to_path_buf(), args.object_name_def());
-    mount::run(fs, &path, &options)?;
-
-    info!("unmounted {}", path.display());
-    Ok(())
+    if args.foreground {
+        serve(&mut daemon::Readiness::foreground())
+    } else {
+        daemon::spawn(&path, serve)
+    }
 }
 
 fn init_logging(verbose: u8) {

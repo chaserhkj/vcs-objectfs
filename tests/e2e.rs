@@ -47,11 +47,15 @@ impl Mount {
     }
 
     /// Mounts an existing `directory`, which outlives the mount.
+    ///
+    /// The daemon stays in the foreground so this process owns its lifetime
+    /// and can unmount it on drop.
     fn start_at(directory: PathBuf, arguments: &[&str]) -> Result<Self, Box<dyn Error>> {
         if !directory.is_dir() {
             return Err(format!("{} is not a directory", directory.display()).into());
         }
         let daemon = Command::new(env!("CARGO_BIN_EXE_vcs-objectfs"))
+            .arg("--foreground")
             .args(arguments)
             .arg(&directory)
             .spawn()?;
@@ -116,6 +120,57 @@ fn fuse_available() -> bool {
 
 fn denied(outcome: io::Result<()>) -> bool {
     outcome.is_err_and(|err| err.kind() == io::ErrorKind::PermissionDenied)
+}
+
+/// A mount left behind by the background daemon, unmounted on drop.
+struct BackgroundMount {
+    directory: PathBuf,
+}
+
+impl Drop for BackgroundMount {
+    fn drop(&mut self) {
+        let _ = Command::new("fusermount3")
+            .args(["-u"])
+            .arg(&self.directory)
+            .status();
+        if self.directory.exists() && is_mounted(&self.directory).unwrap_or(false) {
+            eprintln!("warning: {} is still mounted", self.directory.display());
+        }
+        let _ = fs::remove_dir_all(&self.directory);
+    }
+}
+
+#[test]
+fn default_run_detaches_and_returns() -> Outcome {
+    if !fuse_available() {
+        eprintln!("skipping: FUSE is unavailable");
+        return Ok(());
+    }
+
+    let serial = MOUNTS.fetch_add(1, Ordering::Relaxed);
+    let directory = fs::canonicalize(std::env::temp_dir())?
+        .join(format!("vcs-objectfs-e2e-{}-{serial}", std::process::id()));
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory)?;
+
+    // Without --foreground the command returns on its own once the mount is up.
+    let output = Command::new(env!("CARGO_BIN_EXE_vcs-objectfs"))
+        .arg(&directory)
+        .output()?;
+    assert!(output.status.success(), "the command exits successfully");
+
+    let mount = BackgroundMount { directory };
+    assert!(
+        is_mounted(&mount.directory)?,
+        "the mount outlives the command"
+    );
+    fs::write(mount.directory.join("scratch"), b"through the mount")?;
+    assert_eq!(
+        fs::read(mount.directory.join("scratch"))?,
+        b"through the mount",
+        "the detached daemon serves requests"
+    );
+    Ok(())
 }
 
 #[test]

@@ -81,13 +81,19 @@ vcs-objectfs <PATH>
 the filesystem. The backing directory is reached through an open handle on
 `/proc/self/fd`, so `/proc` must be mounted.
 
+The command returns once the mount is established and leaves the daemon running
+in the background; a startup failure is reported on stderr with a non-zero exit
+status. Pass `--foreground` to serve until unmount instead.
+
 | Option                             | Effect                                        |
 | ---------------------------------- | --------------------------------------------- |
+| `-f`, `--foreground`               | Stay in the foreground instead of detaching   |
 | `-o`, `--option`                   | Extra FUSE mount option, repeatable           |
 | `-m`, `--min-object-name-length <LEN>` | Shortest hex name treated as an object; 16, 0 for any |
 | `-v`, `--verbose`                  | Debug logging; repeat for trace               |
 
-Unmount with `fusermount3 -u <PATH>`, or with Ctrl-C / SIGTERM.
+Unmount with `fusermount3 -u <PATH>`. In the foreground, Ctrl-C / SIGTERM
+unmount as well.
 
 ## Layout
 
@@ -98,6 +104,7 @@ Unmount with `fusermount3 -u <PATH>`, or with Ctrl-C / SIGTERM.
 | `src/cli.rs`        | Command line definition and path validation         |
 | `src/filesystem.rs` | `AcFs` FUSE handler and the immutability rules      |
 | `src/mount.rs`      | Mount call and unmount on termination signals       |
+| `src/daemon.rs`     | `--foreground` switch, fork and startup handshake   |
 | `src/object.rs`     | Object file name and identity                       |
 | `AGENTS.md`         | Access rule set and implementation rules            |
 

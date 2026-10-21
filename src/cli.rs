@@ -30,6 +30,10 @@ pub struct Args {
     )]
     pub min_object_name_length: usize,
 
+    /// Stay in the foreground instead of detaching into the background
+    #[arg(short = 'f', long)]
+    pub foreground: bool,
+
     /// Increase log verbosity; repeat for trace level
     #[arg(short, long, action = clap::ArgAction::Count)]
     pub verbose: u8,
