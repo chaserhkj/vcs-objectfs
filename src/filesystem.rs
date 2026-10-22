@@ -50,16 +50,13 @@ impl AcFs {
 
     /// Refuses to give a new entry the name of an object file.
     fn reject_object_creation(&self, path: &Path, how: &str) -> FuseResult<()> {
-        if !path
-            .file_name()
-            .is_some_and(|name| self.object_name_def.is_name(name))
-        {
-            return Ok(());
+        if self.object_name_def.admits_creation(path) {
+            return Err(ErrorKind::PermissionDenied.to_error(format!(
+                "{}: objects are created by renaming a file to that name, {how} cannot create one",
+                path.display()
+            )));
         }
-        Err(ErrorKind::PermissionDenied.to_error(format!(
-            "{}: objects are created by renaming a file to that name, {how} cannot create one",
-            path.display()
-        )))
+        Ok(())
     }
 }
 
@@ -86,7 +83,8 @@ impl FuseHandler for AcFs {
 
     fn access(&self, req: &RequestInfo, file_id: PathBuf, mask: AccessFlags) -> FuseResult<()> {
         let mut mask = mask;
-        if self.object_name_def.is_file(&self.path(&file_id)) {
+        let path = self.path(&file_id);
+        if self.object_name_def.is_file(&path) {
             mask.remove(AccessFlags::W_OK);
         }
         self.mirror.access(req, file_id, mask)
@@ -99,7 +97,8 @@ impl FuseHandler for AcFs {
         flags: OpenFlags,
     ) -> FuseResult<(Self::FileHandle, FopenFlags)> {
         if writes_content(flags) {
-            self.reject_object_file(&self.path(&file_id))?;
+            let path = self.path(&file_id);
+            self.reject_object_file(&path)?;
         }
         self.mirror.open(req, file_id, flags)
     }
@@ -113,13 +112,11 @@ impl FuseHandler for AcFs {
         umask: u32,
         flags: OpenFlags,
     ) -> FuseResult<(Self::FileHandle, FileAttribute, FopenFlags)> {
-        let path = self.path(&parent_id).join(name);
+        let path = self.path(&parent_id.join(name));
         if writes_content(flags) {
             self.reject_object_file(&path)?;
         }
-        if !self.object_name_def.is_file(&path) {
-            self.reject_object_creation(&path, "creating a file")?;
-        }
+        self.reject_object_creation(&path, "creating a file")?;
         self.mirror.create(req, parent_id, name, mode, umask, flags)
     }
 
@@ -133,7 +130,8 @@ impl FuseHandler for AcFs {
         rdev: DeviceType,
     ) -> FuseResult<FileAttribute> {
         if mode & libc::S_IFMT == libc::S_IFREG {
-            self.reject_object_creation(&self.path(&parent_id).join(name), "mknod")?;
+            let path = self.path(&parent_id.join(name));
+            self.reject_object_creation(&path, "mknod")?;
         }
         self.mirror.mknod(req, parent_id, name, mode, umask, rdev)
     }
@@ -149,7 +147,8 @@ impl FuseHandler for AcFs {
         flags: OpenFlags,
         lock_owner: Option<u64>,
     ) -> FuseResult<u32> {
-        self.reject_object_file(&self.path(&file_id))?;
+        let path = self.path(&file_id);
+        self.reject_object_file(&path)?;
         self.mirror.write(
             req,
             file_id,
@@ -171,7 +170,8 @@ impl FuseHandler for AcFs {
         length: i64,
         mode: FallocateFlags,
     ) -> FuseResult<()> {
-        self.reject_object_file(&self.path(&file_id))?;
+        let path = self.path(&file_id);
+        self.reject_object_file(&path)?;
         self.mirror
             .fallocate(req, file_id, file_handle, offset, length, mode)
     }
@@ -188,7 +188,8 @@ impl FuseHandler for AcFs {
         len: u64,
         flags: CopyFileRangeFlags,
     ) -> FuseResult<u32> {
-        self.reject_object_file(&self.path(&file_out))?;
+        let path = self.path(&file_out);
+        self.reject_object_file(&path)?;
         self.mirror.copy_file_range(
             req,
             file_in,
@@ -209,7 +210,8 @@ impl FuseHandler for AcFs {
         attrs: SetAttrRequest,
         file_handle: Option<&mut Self::FileHandle>,
     ) -> FuseResult<FileAttribute> {
-        self.reject_object_file(&self.path(&file_id))?;
+        let path = self.path(&file_id);
+        self.reject_object_file(&path)?;
         self.mirror.setattr(req, file_id, attrs, file_handle)
     }
 
@@ -222,18 +224,21 @@ impl FuseHandler for AcFs {
         flags: SetXAttrFlags,
         position: u32,
     ) -> FuseResult<()> {
-        self.reject_object_file(&self.path(&file_id))?;
+        let path = self.path(&file_id);
+        self.reject_object_file(&path)?;
         self.mirror
             .setxattr(req, file_id, name, value, flags, position)
     }
 
     fn removexattr(&self, req: &RequestInfo, file_id: PathBuf, name: &OsStr) -> FuseResult<()> {
-        self.reject_object_file(&self.path(&file_id))?;
+        let path = self.path(&file_id);
+        self.reject_object_file(&path)?;
         self.mirror.removexattr(req, file_id, name)
     }
 
     fn unlink(&self, req: &RequestInfo, parent_id: PathBuf, name: &OsStr) -> FuseResult<()> {
-        self.reject_object_file(&self.path(&parent_id).join(name))?;
+        let path = self.path(&parent_id.join(name));
+        self.reject_object_file(&path)?;
         self.mirror.unlink(req, parent_id, name)
     }
 
@@ -246,8 +251,9 @@ impl FuseHandler for AcFs {
         newname: &OsStr,
         flags: RenameFlags,
     ) -> FuseResult<()> {
-        self.reject_object_file(&self.path(&parent_id).join(name))?;
-        let target = self.path(&newparent).join(newname);
+        let path = self.path(&parent_id.join(name));
+        self.reject_object_file(&path)?;
+        let target = self.path(&newparent.join(newname));
         if self.object_name_def.is_file(&target) {
             return Err(ErrorKind::FileExists.to_error(format!(
                 "{} is an object file and keeps its name",

@@ -31,10 +31,19 @@ string at least `--min-object-name-length` characters long — `[0-9a-f]{16,}` b
 default, the hash; a length of 0 accepts `[0-9a-f]+`. A shorter hex name is an
 **ordinary file**. Everything else is an ordinary file too.
 
+`--exclude <PATTERN>` removes paths from that rule: a file whose path relative
+to the source directory matches the glob is an ordinary file whatever its name.
+The flag is repeatable and a match on any pattern excludes. `*` and `?` stop at
+a `/` while `**` spans directories, so `--exclude 'info/*'` covers a
+directory's entries, `--exclude '*.lock'` the top level only, and
+`--exclude '**/*.tmp'` any depth. An invalid pattern stops startup with an
+error naming it.
+
 | Entry                              | Behavior                            |
 | ---------------------------------- | ----------------------------------- |
 | Object file                        | Immutable                           |
 | Directory, symlink, other file     | Same as the backing directory       |
+| Path matching `--exclude`          | Ordinary file, whatever its name    |
 
 Object files are immutable in the sense that all of these fail with `EPERM`:
 
@@ -109,6 +118,7 @@ status. Pass `--foreground` to serve until unmount instead.
 | `-f`, `--foreground`               | Stay in the foreground instead of detaching   |
 | `-o`, `--option`                   | Extra FUSE mount option, repeatable           |
 | `-m`, `--min-object-name-length <LEN>` | Shortest hex name treated as an object; 16, 0 for any |
+| `-e`, `--exclude <PATTERN>`        | Source-relative glob kept ordinary, repeatable |
 | `-v`, `--verbose`                  | Debug logging; repeat for trace               |
 
 Unmount with `fusermount3 -u <PATH>`. In the foreground, Ctrl-C / SIGTERM
@@ -122,6 +132,7 @@ unmount as well.
 | `src/backing.rs`    | Open handle to the directory the mount covers       |
 | `src/cli.rs`        | Command line definition and path validation         |
 | `src/filesystem.rs` | `AcFs` FUSE handler and the immutability rules      |
+| `src/exclude.rs`    | Globs of source-relative paths kept ordinary        |
 | `src/mount.rs`      | Mount call and unmount on termination signals       |
 | `src/daemon.rs`     | `--foreground` switch, fork and startup handshake   |
 | `src/object.rs`     | Object file name and identity                       |

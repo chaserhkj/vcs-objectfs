@@ -1,6 +1,7 @@
 mod backing;
 mod cli;
 mod daemon;
+mod exclude;
 mod filesystem;
 mod mount;
 mod object;
@@ -45,7 +46,7 @@ fn run(args: &Args) -> Result<(), Box<dyn Error>> {
     );
 
     let source = backing.path().to_path_buf();
-    let object_name_def = args.object_name_def();
+    let object_name_def = args.object_name_def(source.clone())?;
     let mountpoint = path.clone();
     let serve = move |readiness: &mut daemon::Readiness| {
         info!("serving {} in place", mountpoint.display());

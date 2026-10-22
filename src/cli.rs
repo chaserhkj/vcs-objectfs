@@ -1,9 +1,11 @@
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use clap::Parser;
 
+use crate::exclude::Excludes;
 use crate::object::{DEFAULT_MIN_NAME_LENGTH, ObjectNameDef};
 
 /// Command line arguments for the object file filesystem.
@@ -34,6 +36,10 @@ pub struct Args {
     #[arg(short = 'f', long)]
     pub foreground: bool,
 
+    /// Glob of a path, relative to the source directory, that stays an ordinary file; repeatable
+    #[arg(short = 'e', long, value_name = "PATTERN")]
+    pub exclude: Vec<String>,
+
     /// Increase log verbosity; repeat for trace level
     #[arg(short, long, action = clap::ArgAction::Count)]
     pub verbose: u8,
@@ -41,8 +47,11 @@ pub struct Args {
 
 impl Args {
     /// Object name recognition rule.
-    pub fn object_name_def(&self) -> ObjectNameDef {
-        ObjectNameDef::new(self.min_object_name_length)
+    pub fn object_name_def(&self, source: PathBuf) -> Result<ObjectNameDef, Box<dyn Error>> {
+        let excludes = Excludes::new(&self.exclude)?;
+        Ok(ObjectNameDef::new(source)
+            .with_min_length(self.min_object_name_length)
+            .with_excludes(Arc::new(excludes)))
     }
 
     /// Canonical path of the directory, which must exist.

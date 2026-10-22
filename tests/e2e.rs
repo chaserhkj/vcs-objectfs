@@ -321,6 +321,87 @@ fn zero_min_length_makes_every_hex_name_an_object() -> Outcome {
     Ok(())
 }
 
+#[test]
+fn excluded_patterns_stay_ordinary_files() -> Outcome {
+    if !fuse_available() {
+        eprintln!("skipping: FUSE is unavailable");
+        return Ok(());
+    }
+    let mount = Mount::start_with(&[
+        "--exclude",
+        "excluded/*",
+        "--exclude",
+        "**/*.tmp",
+        "--exclude",
+        "0123456789abcdef",
+    ])?;
+    fs::create_dir(mount.path("excluded"))?;
+
+    // A hex-named file below an excluded directory is an ordinary file: it can
+    // be created, written, renamed and removed.
+    let object = mount.path("excluded/deadbeefdeadbeef");
+    fs::write(&object, b"one")?;
+    fs::write(&object, b"two")?;
+    assert_eq!(fs::read(&object)?, b"two", "the content follows writes");
+    fs::rename(&object, mount.path("excluded/moved"))?;
+    fs::remove_file(mount.path("excluded/moved"))?;
+
+    // A nested pattern applies at any depth.
+    let nested = mount.path("ab/deadbeefdeadbeef.tmp");
+    fs::create_dir(mount.path("ab"))?;
+    fs::write(&nested, b"tmp")?;
+    fs::write(&nested, b"tmp again")?;
+    fs::remove_file(&nested)?;
+
+    // An excluded name at the top of the source directory stays ordinary even
+    // though it is hash-shaped.
+    let top = mount.path("0123456789abcdef");
+    fs::write(&top, b"ordinary")?;
+    fs::write(&top, b"still ordinary")?;
+    fs::rename(&top, mount.path("top-moved"))?;
+
+    // Everything the patterns do not match keeps the object rule.
+    let object = mount.path("cafebabecafebabe");
+    fs::write(mount.path("scratch"), b"commit")?;
+    fs::rename(mount.path("scratch"), &object)?;
+    assert!(denied(fs::write(&object, b"changed")), "write");
+    assert!(denied(fs::remove_file(&object)), "unlink");
+    assert!(
+        denied(fs::write(mount.path("feedfacefeedface"), b"new")),
+        "create under an object name"
+    );
+
+    // An excluded path accepts a new file under a hash-shaped name.
+    fs::write(mount.path("excluded/cafebabecafebabe"), b"new")?;
+    fs::remove_file(mount.path("excluded/cafebabecafebabe"))?;
+    Ok(())
+}
+
+#[test]
+fn an_invalid_exclude_pattern_fails_to_start() -> Outcome {
+    if !fuse_available() {
+        eprintln!("skipping: FUSE is unavailable");
+        return Ok(());
+    }
+    let root = scratch_directory("vcs-objectfs-exclude-")?;
+    let output = Command::new(env!("CARGO_BIN_EXE_vcs-objectfs"))
+        .args([
+            "--foreground",
+            "--exclude",
+            "[ab",
+            root.path().to_str().unwrap(),
+        ])
+        .output()?;
+    assert!(!output.status.success(), "the daemon exits non-zero");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("[ab"),
+        "the error names the pattern: {stderr}"
+    );
+    assert!(!is_mounted(root.path())?, "nothing was mounted");
+    Ok(())
+}
+
 /// An executable found in `PATH`.
 fn command_available(name: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|path| {
