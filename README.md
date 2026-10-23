@@ -118,7 +118,7 @@ status. Pass `--foreground` to serve until unmount instead.
 | `-f`, `--foreground`               | Stay in the foreground instead of detaching   |
 | `-o`, `--option`                   | Extra FUSE mount option, repeatable           |
 | `-m`, `--min-object-name-length <LEN>` | Shortest hex name treated as an object; 16, 0 for any |
-| `--cache <MODE>`                   | Content kept across opens: `none`, `objects`, `all` |
+| `--cache <MODE>`                   | Content kept across opens: `objects`, `all`, `none` |
 | `-e`, `--exclude <PATTERN>`        | Source-relative glob kept ordinary, repeatable |
 | `-v`, `--verbose`                  | Debug logging; repeat for trace               |
 
@@ -135,17 +135,18 @@ bytes. `--cache` picks how much to trade that risk for speed.
 
 | `--cache` | Cached | Not cached | An outside change shows up |
 | --------- | ------ | ---------- | -------------------------- |
-| `none`    | nothing | everything | on the next read |
 | `objects` | object files | ordinary files | on the next read of an ordinary file, never for an object file |
 | `all`     | everything | nothing | within one second |
+| `none`    | nothing | everything | on the next read |
 
-`none` is the default, and every read goes to the daemon. `objects` caches only
-object files: their content never changes after the commit, so the cached bytes
-can never be stale. `all` caches everything, and therefore asks the kernel to
-re-check a file's metadata once a second; when that re-check sees the file
-changed, the kernel throws the cached bytes away and reads again. One second is
-that re-check interval, so an outside change can go unnoticed for up to one
-second. Writes made through the mount update the cache directly and are visible
+`objects` is the default. It caches only object files: their content never
+changes after the commit, so the cached bytes can never be stale, and an
+ordinary file is still read from the daemon every time. `all` caches everything,
+and therefore asks the kernel to re-check a file's metadata once a second; when
+that re-check sees the file changed, the kernel throws the cached bytes away and
+reads again. One second is that re-check interval, so an outside change can go
+unnoticed for up to one second. `none` caches nothing, so every read reaches the
+daemon. Writes made through the mount update the cache directly and are visible
 at once.
 
 ## Layout

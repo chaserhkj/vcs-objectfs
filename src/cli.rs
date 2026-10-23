@@ -41,8 +41,8 @@ pub struct Args {
     #[arg(short = 'e', long, value_name = "PATTERN")]
     pub exclude: Vec<String>,
 
-    /// Which file content the kernel keeps across opens: none, objects or all
-    #[arg(long, value_enum, default_value_t = CacheMode::None)]
+    /// Which file content the kernel keeps across opens: objects, all or none
+    #[arg(long, value_enum, default_value_t = CacheMode::Objects)]
     pub cache: CacheMode,
 
     /// Increase log verbosity; repeat for trace level

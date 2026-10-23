@@ -815,12 +815,13 @@ fn repeat_read_cost(mount: &Mount, path: &Path) -> Result<Vec<u64>, Box<dyn Erro
 }
 
 #[test]
-fn cache_all_serves_a_repeat_read_from_the_page_cache() -> Outcome {
+fn cache_modes_decide_whether_a_repeat_read_reaches_the_daemon() -> Outcome {
     if !fuse_available() {
         eprintln!("skipping: FUSE is unavailable");
         return Ok(());
     }
     for (arguments, cached) in [
+        (&["--cache", "none"][..], false),
         (&[][..], false),
         (&["--cache", "objects"][..], false),
         (&["--cache", "all"][..], true),
@@ -884,7 +885,7 @@ fn cache_none_shows_an_outside_change_immediately() -> Outcome {
     let directory = fs::canonicalize(root.path())?;
     fs::write(directory.join("notes.txt"), b"first")?;
     let backing = Backing::open(&directory)?;
-    let mount = Mount::start_at(directory, &[])?;
+    let mount = Mount::start_at(directory, &["--cache", "none"])?;
 
     let notes = mount.path("notes.txt");
     assert_eq!(fs::read(&notes)?, b"first", "the initial content");
