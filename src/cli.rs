@@ -6,6 +6,7 @@ use std::sync::Arc;
 use clap::Parser;
 
 use crate::exclude::Excludes;
+use crate::filesystem::CacheMode;
 use crate::object::{DEFAULT_MIN_NAME_LENGTH, ObjectNameDef};
 
 /// Command line arguments for the object file filesystem.
@@ -39,6 +40,10 @@ pub struct Args {
     /// Glob of a path, relative to the source directory, that stays an ordinary file; repeatable
     #[arg(short = 'e', long, value_name = "PATTERN")]
     pub exclude: Vec<String>,
+
+    /// Which file content the kernel keeps across opens: none, objects or all
+    #[arg(long, value_enum, default_value_t = CacheMode::None)]
+    pub cache: CacheMode,
 
     /// Increase log verbosity; repeat for trace level
     #[arg(short, long, action = clap::ArgAction::Count)]

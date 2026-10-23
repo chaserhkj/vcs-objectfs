@@ -45,12 +45,13 @@ fn run(args: &Args) -> Result<(), Box<dyn Error>> {
             .map(|option| MountOption::CUSTOM(option.clone())),
     );
 
+    let cache = args.cache;
     let source = backing.path().to_path_buf();
     let object_name_def = args.object_name_def(source.clone())?;
     let mountpoint = path.clone();
     let serve = move |readiness: &mut daemon::Readiness| {
         info!("serving {} in place", mountpoint.display());
-        let fs = AcFs::new(source, object_name_def);
+        let fs = AcFs::new(source, object_name_def, cache);
         mount::run(fs, &mountpoint, &options, || readiness.ready())
     };
 

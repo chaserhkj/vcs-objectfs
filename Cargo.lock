@@ -941,6 +941,7 @@ dependencies = [
  "ctrlc",
  "easy_fuser",
  "env_logger",
+ "fuser",
  "globset",
  "libc",
  "log",

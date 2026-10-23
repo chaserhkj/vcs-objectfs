@@ -9,6 +9,7 @@
 use std::error::Error;
 use std::fs;
 use std::io;
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
@@ -738,5 +739,161 @@ fn jj_commits_through_the_mount() -> Outcome {
         "jj reads the repository after git repacked it"
     );
     let _ = mount;
+    Ok(())
+}
+
+/// Writes to the directory a mount covers, bypassing the mount.
+///
+/// The descriptor names the directory opened before the mount, so the path
+/// reaches the files the mount mirrors rather than the mount itself.
+struct Backing {
+    /// Keeps the descriptor the path names open.
+    _handle: fs::File,
+    directory: PathBuf,
+}
+
+impl Backing {
+    fn open(directory: &Path) -> io::Result<Self> {
+        let handle = fs::File::open(directory)?;
+        Ok(Self {
+            directory: PathBuf::from("/proc/self/fd").join(handle.as_raw_fd().to_string()),
+            _handle: handle,
+        })
+    }
+
+    fn write(&self, relative: &str, content: &[u8]) -> io::Result<()> {
+        fs::write(self.directory.join(relative), content)
+    }
+}
+
+/// Reads `relative` through the mount until it reports `expected`, for up to `limit`.
+fn await_content(path: &Path, expected: &[u8], limit: Duration) -> Result<String, Box<dyn Error>> {
+    let deadline = Instant::now() + limit;
+    let mut observed = Vec::new();
+    while Instant::now() < deadline {
+        observed = fs::read(path)?;
+        if observed == expected {
+            return Ok(String::from_utf8_lossy(&observed).into_owned());
+        }
+        sleep(Duration::from_millis(50));
+    }
+    Err(format!(
+        "{} kept reporting {:?} for {limit:?}, expected {:?}",
+        path.display(),
+        String::from_utf8_lossy(&observed),
+        String::from_utf8_lossy(expected)
+    )
+    .into())
+}
+
+/// Bytes the daemon has read from files so far.
+///
+/// The kernel serves a retained page itself, so the count stays put when the
+/// mount keeps the page and grows by the file size when the daemon reads the
+/// backing file again.
+fn daemon_reads(daemon: &Child) -> io::Result<u64> {
+    let io = fs::read_to_string(format!("/proc/{}/io", daemon.id()))?;
+    let entry = io
+        .lines()
+        .find_map(|line| line.strip_prefix("rchar: "))
+        .ok_or_else(|| io::Error::other("no rchar entry"))?;
+    entry
+        .trim()
+        .parse()
+        .map_err(|err| io::Error::other(format!("cannot parse rchar: {err}")))
+}
+
+/// Reads `path` twice and reports the daemon reads the second read caused.
+fn repeat_read_cost(mount: &Mount, path: &Path) -> Result<Vec<u64>, Box<dyn Error>> {
+    let mut costs = Vec::new();
+    for _ in 0..4 {
+        let before = daemon_reads(&mount.daemon)?;
+        assert_eq!(fs::read(path)?.len(), 1 << 20, "a read of the file");
+        costs.push(daemon_reads(&mount.daemon)? - before);
+    }
+    Ok(costs)
+}
+
+#[test]
+fn cache_all_serves_a_repeat_read_from_the_page_cache() -> Outcome {
+    if !fuse_available() {
+        eprintln!("skipping: FUSE is unavailable");
+        return Ok(());
+    }
+    for (arguments, cached) in [
+        (&[][..], false),
+        (&["--cache", "objects"][..], false),
+        (&["--cache", "all"][..], true),
+    ] {
+        let mount = Mount::start_with(arguments)?;
+        fs::write(mount.path("notes.txt"), vec![b'a'; 1 << 20])?;
+        let costs = repeat_read_cost(&mount, &mount.path("notes.txt"))?;
+        drop(mount);
+        eprintln!("{arguments:?}: {costs:?}");
+        if cached {
+            assert!(
+                costs[3] < 1 << 16,
+                "{arguments:?} serves the repeat read from the page cache: {costs:?}"
+            );
+        } else {
+            assert!(
+                costs[3] >= 1 << 20,
+                "{arguments:?} rereads the backing file: {costs:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn cached_content_follows_changes_made_outside_the_mount() -> Outcome {
+    if !fuse_available() {
+        eprintln!("skipping: FUSE is unavailable");
+        return Ok(());
+    }
+    for arguments in [&["--cache", "all"][..], &["--cache", "objects"][..]] {
+        let root = scratch_directory("vcs-objectfs-cache-")?;
+        let directory = fs::canonicalize(root.path())?;
+        fs::write(directory.join("notes.txt"), b"first")?;
+        let backing = Backing::open(&directory)?;
+        let mount = Mount::start_at(directory, arguments)?;
+
+        // Warm the page cache, then change the file behind the mount's back.
+        let notes = mount.path("notes.txt");
+        assert_eq!(fs::read(&notes)?, b"first", "the initial content");
+        assert_eq!(fs::read(&notes)?, b"first", "the cached content");
+        backing.write("notes.txt", b"second")?;
+
+        // `--cache all` revalidates within one attribute TTL, `--cache objects`
+        // never does for an ordinary file, so both must show the new content
+        // within a few seconds at most.
+        let observed = await_content(&notes, b"second", Duration::from_secs(5))?;
+        assert_eq!(observed, "second", "an outside change is not hidden");
+        drop(mount);
+    }
+    Ok(())
+}
+
+#[test]
+fn cache_none_shows_an_outside_change_immediately() -> Outcome {
+    if !fuse_available() {
+        eprintln!("skipping: FUSE is unavailable");
+        return Ok(());
+    }
+    let root = scratch_directory("vcs-objectfs-cache-")?;
+    let directory = fs::canonicalize(root.path())?;
+    fs::write(directory.join("notes.txt"), b"first")?;
+    let backing = Backing::open(&directory)?;
+    let mount = Mount::start_at(directory, &[])?;
+
+    let notes = mount.path("notes.txt");
+    assert_eq!(fs::read(&notes)?, b"first", "the initial content");
+    backing.write("notes.txt", b"second")?;
+    assert_eq!(
+        fs::read(&notes)?,
+        b"second",
+        "the change is visible at once"
+    );
+    drop(mount);
     Ok(())
 }

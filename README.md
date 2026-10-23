@@ -118,11 +118,35 @@ status. Pass `--foreground` to serve until unmount instead.
 | `-f`, `--foreground`               | Stay in the foreground instead of detaching   |
 | `-o`, `--option`                   | Extra FUSE mount option, repeatable           |
 | `-m`, `--min-object-name-length <LEN>` | Shortest hex name treated as an object; 16, 0 for any |
+| `--cache <MODE>`                   | Content kept across opens: `none`, `objects`, `all` |
 | `-e`, `--exclude <PATTERN>`        | Source-relative glob kept ordinary, repeatable |
 | `-v`, `--verbose`                  | Debug logging; repeat for trace               |
 
 Unmount with `fusermount3 -u <PATH>`. In the foreground, Ctrl-C / SIGTERM
 unmount as well.
+
+## Cache
+
+Reading a file costs two copies: the daemon reads the backing file and hands the
+bytes back through `/dev/fuse`. The kernel can keep those bytes in memory
+instead and serve the next read itself, but only when the mount asks for it. The
+ask carries a risk: if the backing file changes, the kernel may hand out the old
+bytes. `--cache` picks how much to trade that risk for speed.
+
+| `--cache` | Cached | Not cached | An outside change shows up |
+| --------- | ------ | ---------- | -------------------------- |
+| `none`    | nothing | everything | on the next read |
+| `objects` | object files | ordinary files | on the next read of an ordinary file, never for an object file |
+| `all`     | everything | nothing | within one second |
+
+`none` is the default, and every read goes to the daemon. `objects` caches only
+object files: their content never changes after the commit, so the cached bytes
+can never be stale. `all` caches everything, and therefore asks the kernel to
+re-check a file's metadata once a second; when that re-check sees the file
+changed, the kernel throws the cached bytes away and reads again. One second is
+that re-check interval, so an outside change can go unnoticed for up to one
+second. Writes made through the mount update the cache directly and are visible
+at once.
 
 ## Layout
 
@@ -131,7 +155,7 @@ unmount as well.
 | `src/main.rs`       | Argument handling, mount options, process lifecycle |
 | `src/backing.rs`    | Open handle to the directory the mount covers       |
 | `src/cli.rs`        | Command line definition and path validation         |
-| `src/filesystem.rs` | `AcFs` FUSE handler and the immutability rules      |
+| `src/filesystem.rs` | `AcFs` FUSE handler, cache modes and immutability rules |
 | `src/exclude.rs`    | Globs of source-relative paths kept ordinary        |
 | `src/mount.rs`      | Mount call and unmount on termination signals       |
 | `src/daemon.rs`     | `--foreground` switch, fork and startup handshake   |
@@ -139,7 +163,11 @@ unmount as well.
 | `nix/package.nix`   | Nix derivation for the binary                       |
 | `flake.nix`         | flake-parts outputs: packages, dev shell, formatter |
 | `AGENTS.md`         | Access rule set and implementation rules            |
+| `PASSTHROUGH_PLAN.md` | What FUSE passthrough would take, and why it is deferred |
 
 `AcFs` delegates every operation without a rule to an `easy_fuser` preset. A rule
 is added by implementing that operation on `AcFs` and removing it from the
 matching `delegate_fs!` list.
+
+`AcFs::open` returns `FOPEN_KEEP_CACHE` for the files `--cache` retains, on top
+of the preset's handle.
